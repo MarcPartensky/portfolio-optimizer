@@ -827,7 +827,7 @@ wheels = [
 [[package]]
 name = "portfolio-optimizer"
 version = "0.1.0"
-source = { editable = "." }
+source = { virtual = "." }
 dependencies = [
     { name = "numpy" },
     { name = "pandas" },
