@@ -15,12 +15,23 @@ Run:
 
 from __future__ import annotations
 
+import logging
+import logging.config
+import time
+from pathlib import Path
 import numpy as np
 import pandas as pd
 import yfinance as yf
 import plotly.graph_objects as go
 import streamlit as st
 from scipy.optimize import minimize
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+
+_conf = Path(__file__).parent / "logger.conf"
+if _conf.exists():
+    logging.config.fileConfig(_conf, disable_existing_loggers=False)
+log = logging.getLogger("app")
 
 # ── Page config ───────────────────────────────────────────────────────────────
 
@@ -45,9 +56,26 @@ st.markdown("""
 
 @st.cache_data(ttl=3600)
 def load_returns(tickers: list[str], start: str, end: str) -> pd.DataFrame:
+    log.info("Downloading price data: %s  [%s → %s]", tickers, start, end)
+    t0 = time.perf_counter()
     raw = yf.download(tickers, start=start, end=end, auto_adjust=True, progress=False)
     prices = raw["Close"] if isinstance(raw["Close"], pd.DataFrame) else raw["Close"].to_frame(tickers[0])
-    return prices.dropna().pct_change().dropna()
+    df = prices.dropna().pct_change().dropna()
+    log.info("Price data loaded: %d assets, %d trading days (%.2fs)", df.shape[1], df.shape[0], time.perf_counter() - t0)
+    return df
+
+
+@st.cache_data(ttl=3600)
+def fetch_euribor_3m() -> float | None:
+    log.info("Fetching Euribor 3M (EURIBOR3MD=)")
+    try:
+        raw = yf.download("EURIBOR3MD=", period="5d", progress=False, auto_adjust=True)
+        val = float(raw["Close"].dropna().iloc[-1]) / 100
+        log.info("Euribor 3M = %.4f", val)
+        return val
+    except Exception as e:
+        log.warning("Euribor 3M fetch failed: %s", e)
+        return None
 
 # ── Core Markowitz ─────────────────────────────────────────────────────────────
 
@@ -64,15 +92,19 @@ def portfolio_stats(
     return ret, vol, sharpe
 
 
-def _base_constraints_bounds(n: int):
-    bounds = tuple((0.0, 1.0) for _ in range(n))
+def _base_constraints_bounds(n: int, leverage: bool = False):
+    # leverage=True: unconstrained weights (short selling + leverage allowed)
+    # leverage=False: long-only, wᵢ ∈ [0, 1]
+    bounds = tuple((-np.inf, np.inf) if leverage else (0.0, 1.0) for _ in range(n))
     constraints = [{"type": "eq", "fun": lambda w: w.sum() - 1}]
     return bounds, constraints
 
 
-def min_variance_weights(mean_returns: np.ndarray, cov: np.ndarray) -> np.ndarray:
+def min_variance_weights(mean_returns: np.ndarray, cov: np.ndarray, leverage: bool = False) -> np.ndarray:
+    log.info("min_variance: n=%d  leverage=%s", len(mean_returns), leverage)
+    t0 = time.perf_counter()
     n = len(mean_returns)
-    bounds, constraints = _base_constraints_bounds(n)
+    bounds, constraints = _base_constraints_bounds(n, leverage)
     result = minimize(
         lambda w: portfolio_stats(w, mean_returns, cov)[1],
         x0=np.ones(n) / n,
@@ -80,12 +112,16 @@ def min_variance_weights(mean_returns: np.ndarray, cov: np.ndarray) -> np.ndarra
         bounds=bounds,
         constraints=constraints,
     )
+    ret, vol, _ = portfolio_stats(result.x, mean_returns, cov)
+    log.info("min_variance: converged=%s  ret=%.3f  vol=%.3f  (%.3fs)", result.success, ret, vol, time.perf_counter() - t0)
     return result.x
 
 
-def max_sharpe_weights(mean_returns: np.ndarray, cov: np.ndarray, rf: float = 0.0) -> np.ndarray:
+def max_sharpe_weights(mean_returns: np.ndarray, cov: np.ndarray, rf: float = 0.0, leverage: bool = False) -> np.ndarray:
+    log.info("max_sharpe: n=%d  rf=%.5f  leverage=%s", len(mean_returns), rf, leverage)
+    t0 = time.perf_counter()
     n = len(mean_returns)
-    bounds, constraints = _base_constraints_bounds(n)
+    bounds, constraints = _base_constraints_bounds(n, leverage)
     result = minimize(
         lambda w: -(portfolio_stats(w, mean_returns, cov)[0] - rf) / max(portfolio_stats(w, mean_returns, cov)[1], 1e-9),
         x0=np.ones(n) / n,
@@ -93,6 +129,8 @@ def max_sharpe_weights(mean_returns: np.ndarray, cov: np.ndarray, rf: float = 0.
         bounds=bounds,
         constraints=constraints,
     )
+    ret, vol, sharpe = portfolio_stats(result.x, mean_returns, cov)
+    log.info("max_sharpe: converged=%s  ret=%.3f  vol=%.3f  sharpe=%.3f  (%.3fs)", result.success, ret, vol, sharpe, time.perf_counter() - t0)
     return result.x
 
 
@@ -100,13 +138,16 @@ def efficient_frontier(
     mean_returns: np.ndarray,
     cov: np.ndarray,
     n_points: int = 80,
+    leverage: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
+    log.info("efficient_frontier: %d points  leverage=%s", n_points, leverage)
+    t0 = time.perf_counter()
     n = len(mean_returns)
     ann_returns = mean_returns * 252
     frontier_vols, frontier_rets = [], []
 
     for target in np.linspace(ann_returns.min(), ann_returns.max(), n_points):
-        bounds, base_constraints = _base_constraints_bounds(n)
+        bounds, base_constraints = _base_constraints_bounds(n, leverage)
         constraints = base_constraints + [
             {"type": "eq", "fun": lambda w, t=target: float(w @ mean_returns) * 252 - t}
         ]
@@ -121,6 +162,7 @@ def efficient_frontier(
             frontier_vols.append(result.fun)
             frontier_rets.append(target)
 
+    log.info("efficient_frontier: %d/%d points converged (%.2fs)", len(frontier_vols), n_points, time.perf_counter() - t0)
     return np.array(frontier_vols), np.array(frontier_rets)
 
 
@@ -129,12 +171,15 @@ def monte_carlo(
     cov: np.ndarray,
     n_portfolios: int = 5_000,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    log.info("monte_carlo: %d portfolios", n_portfolios)
+    t0 = time.perf_counter()
     n = len(mean_returns)
     rets, vols, sharpes = [], [], []
     for _ in range(n_portfolios):
         w = np.random.dirichlet(np.ones(n))
         r, v, s = portfolio_stats(w, mean_returns, cov)
         rets.append(r); vols.append(v); sharpes.append(s)
+    log.info("monte_carlo: done (%.2fs)  max_sharpe=%.3f", time.perf_counter() - t0, max(sharpes))
     return np.array(rets), np.array(vols), np.array(sharpes)
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
@@ -154,10 +199,18 @@ with st.sidebar:
     with col2:
         end_date = st.date_input("End", value=pd.Timestamp("2024-12-31"))
 
-    rf_rate = st.slider("Risk-free rate (%/yr)", 0.0, 10.0, 4.5, 0.1) / 100
+    euribor = fetch_euribor_3m()
+    rf_default = round(euribor * 100, 2) if euribor else 4.5
+    rf_label = f"Risk-free rate (%/yr)  — Euribor 3M live: {euribor:.2%}" if euribor else "Risk-free rate (%/yr)  — Euribor 3M unavailable"
+    rf_rate = st.slider(rf_label, 0.0, 10.0, rf_default, 0.1) / 100
     n_mc = st.select_slider("Monte Carlo portfolios", options=[1_000, 2_000, 5_000, 10_000], value=5_000)
+    allow_leverage = st.toggle(
+        "Allow leverage & short selling",
+        value=False,
+        help="Removes the wᵢ ∈ [0,1] constraint. Weights can be negative (short) or >1 (leveraged).",
+    )
 
-    run = st.button("🚀 Optimise", use_container_width=True, type="primary")
+    run = st.button("🚀 Optimise", width="stretch", type="primary")
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
@@ -190,9 +243,9 @@ cov = returns.cov().values
 # ── Optimise ──────────────────────────────────────────────────────────────────
 
 with st.spinner("Running optimisation…"):
-    mv_w = min_variance_weights(mean_ret, cov)
-    ms_w = max_sharpe_weights(mean_ret, cov, rf=rf_rate / 252)
-    ef_vols, ef_rets = efficient_frontier(mean_ret, cov)
+    mv_w = min_variance_weights(mean_ret, cov, leverage=allow_leverage)
+    ms_w = max_sharpe_weights(mean_ret, cov, rf=rf_rate / 252, leverage=allow_leverage)
+    ef_vols, ef_rets = efficient_frontier(mean_ret, cov, leverage=allow_leverage)
     mc_rets, mc_vols, mc_sharpes = monte_carlo(mean_ret, cov, n_portfolios=n_mc)
 
 mv_ret, mv_vol, mv_sharpe = portfolio_stats(mv_w, mean_ret, cov)
@@ -212,7 +265,7 @@ st.divider()
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 
-tab1, tab2, tab3 = st.tabs(["📊 Efficient Frontier", "🥧 Allocations", "🔗 Correlation"])
+tab1, tab2, tab3, tab4 = st.tabs(["📊 Efficient Frontier", "🥧 Allocations", "🔗 Correlation", "⚠️ VaR"])
 
 # Tab 1 — Efficient Frontier ─────────────────────────────────────────────────
 
@@ -289,7 +342,7 @@ with tab1:
         height=560,
         margin=dict(r=160),
     )
-    st.plotly_chart(fig_ef, use_container_width=True)
+    st.plotly_chart(fig_ef, width="stretch")
 
 # Tab 2 — Allocations ─────────────────────────────────────────────────────────
 
@@ -321,10 +374,10 @@ with tab2:
         )
 
         with col:
-            st.plotly_chart(fig_pie, use_container_width=True)
+            st.plotly_chart(fig_pie, width="stretch")
             st.dataframe(df_alloc[["Ticker", "Weight (%)"]].style.bar(
                 subset="Weight (%)", color=color + "88"
-            ), use_container_width=True, hide_index=True)
+            ), width="stretch", hide_index=True)
 
 # Tab 3 — Correlation ─────────────────────────────────────────────────────────
 
@@ -344,7 +397,7 @@ with tab3:
         template="plotly_dark",
         height=520,
     )
-    st.plotly_chart(fig_corr, use_container_width=True)
+    st.plotly_chart(fig_corr, width="stretch")
 
     # Summary stats
     st.subheader("📋 Summary Statistics")
@@ -360,6 +413,117 @@ with tab3:
         summary.style
             .format({"Ann. Return": "{:.2%}", "Ann. Volatility": "{:.2%}", "Sharpe (vs Rf)": "{:.2f}"})
             .background_gradient(subset="Sharpe (vs Rf)", cmap="RdYlGn"),
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
+
+# Tab 4 — VaR ─────────────────────────────────────────────────────────────────
+
+with tab4:
+    st.subheader("⚠️ Value at Risk — Max Sharpe Portfolio")
+    st.caption("Trois méthodes : paramétrique (normale), historique, Monte Carlo GBM")
+
+    var_col1, var_col2 = st.columns([1, 2])
+    with var_col1:
+        confidence = st.selectbox("Confidence level", [0.95, 0.99, 0.999], index=1, format_func=lambda x: f"{x:.1%}")
+        horizon = st.selectbox("Horizon (days)", [1, 5, 10, 21], index=0)
+        n_var_sim = st.select_slider("MC simulations", options=[10_000, 50_000, 100_000], value=10_000)
+        notional = st.number_input("Portfolio value (€)", value=1_000_000, step=100_000)
+
+    # Portfolio daily returns for the Max Sharpe weights
+    port_daily_rets = returns[valid_tickers].values @ ms_w  # shape (T,)
+
+    # ── 1. Parametric VaR (normal distribution) ──────────────────────────────
+    from scipy.stats import norm
+    port_mu  = float(port_daily_rets.mean())
+    port_sig = float(port_daily_rets.std())
+    z = norm.ppf(1 - confidence)
+    var_param_1d  = -(port_mu + z * port_sig)
+    var_param_hd  = var_param_1d * np.sqrt(horizon)   # square-root-of-time scaling
+    cvar_param_1d = port_sig * norm.pdf(z) / (1 - confidence) - port_mu
+
+    # ── 2. Historical VaR ────────────────────────────────────────────────────
+    var_hist_1d = float(-np.percentile(port_daily_rets, (1 - confidence) * 100))
+    var_hist_hd = var_hist_1d * np.sqrt(horizon)
+    cvar_hist_1d = float(-port_daily_rets[port_daily_rets <= -var_hist_1d].mean())
+
+    # ── 3. Monte Carlo VaR (GBM) ─────────────────────────────────────────────
+    rng = np.random.default_rng(42)
+    # Simulate horizon-day portfolio P&L via GBM on each asset, then aggregate
+    dt = 1 / 252
+    chol = np.linalg.cholesky(returns[valid_tickers].cov().values)
+    mu_vec = returns[valid_tickers].mean().values
+    sim_rets = np.zeros(n_var_sim)
+    for _ in range(horizon):
+        z_draws = rng.standard_normal((len(valid_tickers), n_var_sim))
+        daily = mu_vec[:, None] * dt + chol @ z_draws * np.sqrt(dt)
+        sim_rets += (ms_w @ daily)          # cumulate log-approx returns
+    var_mc_hd  = float(-np.percentile(sim_rets, (1 - confidence) * 100))
+    cvar_mc_hd = float(-sim_rets[sim_rets <= -var_mc_hd].mean())
+
+    # ── Display ───────────────────────────────────────────────────────────────
+    with var_col2:
+        df_var = pd.DataFrame({
+            "Method":        ["Parametric (Normal)", "Historical", "Monte Carlo (GBM)"],
+            f"VaR {horizon}d (%)":  [var_param_hd, var_hist_hd, var_mc_hd],
+            f"VaR {horizon}d (€)":  [v * notional for v in [var_param_hd, var_hist_hd, var_mc_hd]],
+            f"CVaR 1d (%)": [cvar_param_1d, cvar_hist_1d, float("nan")],
+        })
+        st.dataframe(
+            df_var.style
+                .format({
+                    f"VaR {horizon}d (%)":  "{:.3%}",
+                    f"VaR {horizon}d (€)":  "{:,.0f} €",
+                    f"CVaR 1d (%)": "{:.3%}",
+                })
+                .background_gradient(subset=[f"VaR {horizon}d (%)"], cmap="Reds"),
+            width="stretch",
+            hide_index=True,
+        )
+
+    # ── P&L histogram with VaR lines ─────────────────────────────────────────
+    fig_var = go.Figure()
+    fig_var.add_trace(go.Histogram(
+        x=port_daily_rets,
+        nbinsx=80,
+        name="Historical daily P&L",
+        marker_color="#4C9BE8",
+        opacity=0.7,
+    ))
+    for val, label, color in [
+        (-var_param_1d, f"Param VaR 1d ({confidence:.0%})", "#F8D347"),
+        (-var_hist_1d,  f"Hist  VaR 1d ({confidence:.0%})", "#F08030"),
+    ]:
+        fig_var.add_vline(x=val, line_color=color, line_dash="dash", line_width=2,
+                          annotation_text=label, annotation_position="top left")
+    fig_var.update_layout(
+        template="plotly_dark",
+        title="Max Sharpe Portfolio — Daily Return Distribution",
+        xaxis_title="Daily Return",
+        yaxis_title="Frequency",
+        xaxis_tickformat=".1%",
+        height=420,
+    )
+    st.plotly_chart(fig_var, width="stretch")
+
+    # ── MC P&L distribution ───────────────────────────────────────────────────
+    fig_mc_var = go.Figure()
+    fig_mc_var.add_trace(go.Histogram(
+        x=sim_rets,
+        nbinsx=100,
+        name=f"MC {horizon}d P&L",
+        marker_color="#7EC8A4",
+        opacity=0.7,
+    ))
+    fig_mc_var.add_vline(x=-var_mc_hd, line_color="#F08030", line_dash="dash", line_width=2,
+                         annotation_text=f"MC VaR {horizon}d ({confidence:.0%})",
+                         annotation_position="top left")
+    fig_mc_var.update_layout(
+        template="plotly_dark",
+        title=f"Monte Carlo GBM — {horizon}-day Portfolio Return Distribution ({n_var_sim:,} simulations)",
+        xaxis_title=f"{horizon}-day Return",
+        yaxis_title="Frequency",
+        xaxis_tickformat=".1%",
+        height=380,
+    )
+    st.plotly_chart(fig_mc_var, width="stretch")
