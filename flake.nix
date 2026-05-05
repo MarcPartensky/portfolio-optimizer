@@ -40,18 +40,18 @@
         dontConfigure = true;
         dontBuild = true;
         installPhase = ''
-          mkdir -p $out/bin $out/lib
-          cp -r . $out/lib/
+          mkdir -p $out/bin $out/lib/portfolio-optimizer
+          cp -r . $out/lib/portfolio-optimizer/
           cat > $out/bin/portfolio-optimizer << EOF
           #!/bin/sh
-          exec ${venv}/bin/streamlit run $out/lib/app.py \
+          exec ${venv}/bin/streamlit run $out/lib/portfolio-optimizer/app.py \
             --browser.gatherUsageStats=false \
             --server.fileWatcherType=none \
+            --server.port=8502 \
             "\$@"
           EOF
           chmod +x $out/bin/portfolio-optimizer
         '';
-      };
 
       devShells.default = pkgs.mkShell {
         packages = [
