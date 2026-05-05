@@ -52,6 +52,7 @@
           EOF
           chmod +x $out/bin/portfolio-optimizer
         '';
+      };
 
       devShells.default = pkgs.mkShell {
         packages = [
