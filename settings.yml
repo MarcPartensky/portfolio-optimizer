@@ -1,0 +1,21 @@
+data:
+  cache_ttl: 3600
+  default_tickers: "AAPL, MSFT, GOOGL, AMZN, JPM, GS, XOM, JNJ"
+  euribor_ticker: "^IRX"
+
+
+portfolio:
+  trading_days: 252
+  default_rf_pct: 4.5
+  frontier_points: 80
+  mc_portfolios: 5000
+
+var:
+  default_confidence: 0.99
+  default_horizon: 1
+  mc_simulations: 10000
+  default_notional: 1000000
+
+ui:
+  page_title: "Portfolio Optimizer"
+  page_icon: "📈"

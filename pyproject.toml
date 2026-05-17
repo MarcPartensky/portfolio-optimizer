@@ -12,6 +12,7 @@ dependencies = [
     "plotly>=5.22",
     "streamlit>=1.35",
     "matplotlib>=3.10.9",
+    "pyyaml>=6.0.3",
 ]
 
 [dependency-groups]
