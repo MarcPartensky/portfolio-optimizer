@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 from scipy.optimize import minimize
 
-from settings import cfg
+from portfolio_optimizer.settings import cfg
 
 TRADING_DAYS = cfg["portfolio"]["trading_days"]
 FRONTIER_POINTS = cfg["portfolio"]["frontier_points"]

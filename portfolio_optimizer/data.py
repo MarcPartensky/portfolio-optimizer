@@ -4,7 +4,7 @@ import yfinance as yf
 import pandas as pd
 import streamlit as st
 
-from settings import cfg
+from portfolio_optimizer.settings import cfg
 
 
 @st.cache_data(ttl=cfg["data"]["cache_ttl"])

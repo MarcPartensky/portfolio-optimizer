@@ -11,17 +11,19 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from settings import cfg
-from data import load_returns, fetch_euribor_3m
-from optimizer import (
+from portfolio_optimizer.data import load_returns, fetch_euribor_3m
+from portfolio_optimizer.optimizer import (
     min_variance,
     max_sharpe,
     efficient_frontier,
     monte_carlo,
     portfolio_stats,
 )
-from var import parametric_var, historical_var, montecarlo_var
-from charts import (
+
+from portfolio_optimizer.settings import cfg
+
+from portfolio_optimizer.var import parametric_var, historical_var, montecarlo_var
+from portfolio_optimizer.charts import (
     plot_frontier,
     plot_allocations,
     plot_correlation,

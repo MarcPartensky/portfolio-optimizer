@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import norm
 
-from settings import cfg
+from portfolio_optimizer.settings import cfg
 
 
 def parametric_var(
