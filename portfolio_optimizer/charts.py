@@ -144,7 +144,7 @@ def plot_allocations(
             )
         )
         fig.update_layout(
-            title=label, template="plotly_dark", height=380, showlegend=False
+            title=label, template="plotly_white", height=380, showlegend=False
         )
 
         figures.append(fig)
@@ -164,6 +164,7 @@ def plot_correlation(
             z=corr.values,
             x=tickers,
             y=tickers,
+            # colorscale=[[0, "#2166ac"], [0.5, "#ffffff"], [1, "#b2182b"]],
             colorscale="RdBu_r",
             zmid=0,
             zmin=-1,
@@ -174,7 +175,7 @@ def plot_correlation(
         )
     )
     fig.update_layout(
-        title="Asset Correlation Matrix", template="plotly_dark", height=520
+        title="Asset Correlation Matrix", template="plotly_white", height=520
     )
 
     ann_ret = returns.mean() * 252
