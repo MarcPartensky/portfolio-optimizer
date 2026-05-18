@@ -43,10 +43,74 @@ st.set_page_config(
 st.markdown(
     """
 <style>
-    [data-testid="stSidebar"] {background: #0d1117;}
-    .block-container {padding-top: 1.5rem;}
-    h1 {font-size: 1.8rem !important;}
-    .stTabs [data-baseweb="tab"] {font-size: 0.9rem;}
+    /* Sidebar */
+    [data-testid="stSidebar"] {
+        background: #f2f2f2;
+        border-right: 1px solid #e0e0e0;
+    }
+    [data-testid="stSidebar"] * { color: #1a1a1a !important; }
+    [data-testid="stSidebar"] input {
+        background: #ffffff !important;
+        color: #1a1a1a !important;
+        border: 1px solid #cccccc !important;
+    }
+
+    [data-testid="stSidebar"] .stButton > button {
+        background: #ffffff;
+        color: #1a1a1a;
+        font-weight: 600;
+        border: 1px solid #cccccc;
+        border-radius: 3px;
+        width: 100%;
+    }
+    [data-testid="stSidebar"] .stButton > button:hover {
+        background: #e8e8e8;
+        color: #1a1a1a;
+        border-color: #999999;
+    }
+
+    /* Layout */
+    .block-container { padding-top: 1.5rem; }
+    .main { background: #ffffff; }
+
+    /* Typography */
+    h1 { font-size: 1.7rem !important; color: #1a1a1a !important; font-weight: 700 !important; }
+    h2, h3 { color: #2d2d2d !important; }
+
+    /* Tabs */
+    .stTabs [data-baseweb="tab-list"] { border-bottom: 2px solid #e0e0e0; }
+    .stTabs [data-baseweb="tab"] {
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: #888888;
+        padding: 0.5rem 1.2rem;
+    }
+    .stTabs [aria-selected="true"] {
+        color: #1a1a1a !important;
+        border-bottom: 3px solid #1a1a1a !important;
+    }
+
+    /* Metrics */
+    [data-testid="metric-container"] {
+        background: #f7f7f7;
+        border: 1px solid #e8e8e8;
+        border-top: 3px solid #2d2d2d;
+        border-radius: 3px;
+        padding: 0.8rem 1rem;
+    }
+    [data-testid="metric-container"] label {
+        color: #888888 !important;
+        font-size: 0.75rem !important;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+    [data-testid="metric-container"] [data-testid="stMetricValue"] {
+        color: #1a1a1a !important;
+        font-weight: 700;
+    }
+
+    /* Divider */
+    hr { border-color: #e8e8e8; }
 </style>
 """,
     unsafe_allow_html=True,
