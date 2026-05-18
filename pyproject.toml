@@ -15,6 +15,16 @@ dependencies = [
     "pyyaml>=6.0.3",
 ]
 
+[project.scripts]
+portfolio-optimizer = "portfolio_optimizer.app:main"
+
+[build-system]
+requires = ["setuptools>=72"]
+build-backend = "setuptools.backends.legacy:build"
+
+[tool.setuptools.packages.find]
+include = ["portfolio_optimizer*"]
+
 [dependency-groups]
 dev = [
     "ruff>=0.4",
